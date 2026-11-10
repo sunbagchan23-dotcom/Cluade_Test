@@ -1,0 +1,52 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project ScreenOCRTest.xcodeproj \
+            -scheme ScreenOCRTest \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            build | tail -n 80
+
+      - name: Package IPA
+        run: |
+          APP=build/Build/Products/Release-iphoneos/ScreenOCRTest.app
+          ls "$APP/PlugIns"
+          # 서명 없는 빌드에는 권한(App Group) 정보가 빠지므로 임시 서명으로 넣어 둔다.
+          # Sideloadly/AltStore가 이 정보를 보고 무료 계정용 App Group을 만든다.
+          codesign --force --sign - --entitlements Extension/Extension.entitlements "$APP/PlugIns/BroadcastExt.appex"
+          codesign --force --sign - --entitlements App/App.entitlements "$APP"
+          codesign -d --entitlements - "$APP"
+          codesign -d --entitlements - "$APP/PlugIns/BroadcastExt.appex"
+          mkdir -p out/Payload
+          cp -R "$APP" out/Payload/
+          cd out && zip -qry ScreenOCRTest.ipa Payload && ls -lh ScreenOCRTest.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ScreenOCRTest-ipa
+          path: out/ScreenOCRTest.ipa
+          retention-days: 30
