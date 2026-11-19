@@ -11,7 +11,7 @@ struct SessionSummary {
     var end: Date?
     var ocrRuns = 0
     var changed = 0
-    /// 건너뛴 이유별 개수 (dup, self, home, empty)
+    /// 건너뛴 이유별 개수 (self, home, empty)
     var skipped: [String: Int] = [:]
     var skippedTotal: Int { skipped.values.reduce(0, +) }
     var errors = 0

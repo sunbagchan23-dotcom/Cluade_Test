@@ -20,13 +20,14 @@ final class SampleHandler: RPBroadcastSampleHandler {
 
     private var settings = OCRSettings.load()
     private let log = LogWriter()
-    /// 최근에 기록한 화면 3개(비교용 정규화 문자열). 앱을 오가며 같은 화면이 다시 나와도 걸러진다.
-    private var recentTexts: [String] = []
-    /// 건너뛴 이유별 개수: dup(90% 이상 비슷), self(이 앱), home(홈 화면), empty(글자 거의 없음)
+    /// 직전에 기록한 글자. 완전히 같을 때만 "same"으로 글자 없이 남긴다 (필터 이전과 같은 동작).
+    private var lastText = ""
+    /// 직전 기록(비교용 정규화 문자열). 유사도는 기록만 하고 건너뛰는 데 쓰지 않는다.
+    private var lastNorm = ""
+    /// 건너뛴 이유별 개수: self(이 앱), home(홈 화면), empty(글자 거의 없음)
     private var skipped: [String: Int] = [:]
     private var removedStatusLines = 0
     private var removedKeyboardLines = 0
-    static let dupThreshold = 0.9
     private var grayBuffer: CVPixelBuffer?
     private var memSource: DispatchSourceMemoryPressure?
     private var beat: DispatchSourceTimer?
@@ -200,21 +201,22 @@ final class SampleHandler: RPBroadcastSampleHandler {
             skip(reason, ms: ms, text: text, note: cutNote)
             return
         }
-        // 3) 글자가 거의 없거나, 최근 기록과 90% 이상 비슷하면 기록 안 함
+        // 3) 글자가 거의 없으면 기록 안 함
+        //    (90% 유사 중복 건너뛰기는 2026-11-19 실기기 시험에서 새 카톡 메시지가 있는 화면을
+        //     sim=0.91로 버려서 되돌렸다. 유사도 값은 note에 기록만 한다.)
         let norm = ScreenFilter.normalize(text)
         if norm.count < 10 {
             skip("empty", ms: ms, text: text, note: cutNote)
             return
         }
-        let best = recentTexts.map { ScreenFilter.similarity(norm, $0) }.max() ?? 0
-        if best >= Self.dupThreshold {
-            skip("dup", ms: ms, text: text, note: cutNote + String(format: " sim=%.2f", best))
+        let simNote = cutNote + String(format: " sim=%.2f", ScreenFilter.similarity(norm, lastNorm))
+        if text == lastText {
+            write("same", ocrMs: ms, chars: text.count, note: simNote)
             return
         }
-        recentTexts.append(norm)
-        if recentTexts.count > 3 { recentTexts.removeFirst() }
-        write("ocr", ocrMs: ms, chars: text.count, text: text,
-              note: cutNote + String(format: " sim=%.2f", best))
+        lastText = text
+        lastNorm = norm
+        write("ocr", ocrMs: ms, chars: text.count, text: text, note: simNote)
     }
 
     /// 건너뛴 화면도 시험 중에는 글자를 남긴다. 잘못 걸러진 게 있는지 사람이 확인하기 위해서다.
@@ -225,7 +227,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     }
 
     private func statsNote() -> String {
-        let s = ["dup", "self", "home", "empty"].map { "\($0)=\(skipped[$0] ?? 0)" }.joined(separator: " ")
+        let s = ["self", "home", "empty"].map { "\($0)=\(skipped[$0] ?? 0)" }.joined(separator: " ")
         return "skip[\(s)] removedLines[sb=\(removedStatusLines) kb=\(removedKeyboardLines)]"
     }
 

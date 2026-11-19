@@ -65,8 +65,8 @@ struct ContentView: View {
         } else {
             LabeledContent("시간", value: String(format: "%.1f분", s.minutes))
             LabeledContent("OCR 실행 / 기록 / 건너뜀", value: "\(s.ocrRuns) / \(s.changed) / \(s.skippedTotal)")
-            LabeledContent("건너뜀: 중복 / 이 앱 / 홈 / 빈 화면",
-                           value: ["dup", "self", "home", "empty"].map { "\(s.skipped[$0] ?? 0)" }.joined(separator: " / "))
+            LabeledContent("건너뜀: 이 앱 / 홈 / 빈 화면",
+                           value: ["self", "home", "empty"].map { "\(s.skipped[$0] ?? 0)" }.joined(separator: " / "))
             LabeledContent("OCR 평균 / 최대", value: "\(s.avgOcrMs) / \(s.maxOcrMs) ms")
             LabeledContent("최대 메모리", value: String(format: "%.1f MB", s.peakMB))
             if let a = s.minAvailMB {
