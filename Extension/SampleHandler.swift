@@ -3,7 +3,7 @@ import Vision
 import Accelerate
 import UIKit
 
-/// 화면 방송 확장. 약 50MB 메모리 한도 안에서 N초마다 한 프레임만 OCR한다.
+/// 화면 방송 확장. 메모리 한도(실측 약 300MB, 원래 가정은 50MB) 안에서 N초마다 한 프레임만 OCR한다.
 ///
 /// 메모리 절약 방식
 /// - 처리 중이거나 간격이 안 됐으면 프레임을 즉시 버린다 (큐에 쌓지 않음).
@@ -20,7 +20,13 @@ final class SampleHandler: RPBroadcastSampleHandler {
 
     private var settings = OCRSettings.load()
     private let log = LogWriter()
-    private var lastText = ""
+    /// 최근에 기록한 화면 3개(비교용 정규화 문자열). 앱을 오가며 같은 화면이 다시 나와도 걸러진다.
+    private var recentTexts: [String] = []
+    /// 건너뛴 이유별 개수: dup(90% 이상 비슷), self(이 앱), home(홈 화면), empty(글자 거의 없음)
+    private var skipped: [String: Int] = [:]
+    private var removedStatusLines = 0
+    private var removedKeyboardLines = 0
+    static let dupThreshold = 0.9
     private var grayBuffer: CVPixelBuffer?
     private var memSource: DispatchSourceMemoryPressure?
     private var beat: DispatchSourceTimer?
@@ -47,7 +53,10 @@ final class SampleHandler: RPBroadcastSampleHandler {
         // 화면이 안 바뀌면 프레임이 안 오므로, 1분마다 메모리·배터리를 따로 기록한다.
         let t = DispatchSource.makeTimerSource(queue: ocrQueue)
         t.schedule(deadline: .now() + 60, repeating: 60)
-        t.setEventHandler { [weak self] in self?.write("beat") }
+        t.setEventHandler { [weak self] in
+            guard let self else { return }
+            self.write("beat", note: self.statsNote())
+        }
         t.resume()
         beat = t
     }
@@ -57,7 +66,8 @@ final class SampleHandler: RPBroadcastSampleHandler {
 
     override func broadcastFinished() {
         beat?.cancel(); memSource?.cancel()
-        write("stop", note: "ocrCount=\(ocrCount)")
+        // 집계 값은 ocr 큐에서만 바뀌므로 같은 큐에서 읽는다.
+        ocrQueue.sync { write("stop", note: "ocrCount=\(ocrCount) " + statsNote()) }
         log.flush()
     }
 
@@ -146,7 +156,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     private func recognize(_ pixel: CVPixelBuffer, orientation: CGImagePropertyOrientation, note: String?) {
         defer { finish() }
         let t0 = CACurrentMediaTime()
-        var text = ""
+        var lines: [OCRLine] = []
         var errorNote: String?
 
         autoreleasepool {
@@ -158,9 +168,10 @@ final class SampleHandler: RPBroadcastSampleHandler {
             let handler = VNImageRequestHandler(cvPixelBuffer: pixel, orientation: orientation, options: [:])
             do {
                 try handler.perform([req])
-                text = (req.results ?? [])
-                    .compactMap { $0.topCandidates(1).first?.string }
-                    .joined(separator: "\n")
+                lines = (req.results ?? []).compactMap { obs in
+                    guard let s = obs.topCandidates(1).first?.string else { return nil }
+                    return OCRLine(text: s, midY: Double(obs.boundingBox.midY))
+                }
             } catch {
                 errorNote = error.localizedDescription
             }
@@ -174,12 +185,48 @@ final class SampleHandler: RPBroadcastSampleHandler {
         }
         let size = "\(CVPixelBufferGetWidth(pixel))x\(CVPixelBufferGetHeight(pixel))"
         let fullNote = [note, size].compactMap { $0 }.joined(separator: " ")
-        if text == lastText {
-            write("same", ocrMs: ms, chars: text.count, note: fullNote)
-        } else {
-            lastText = text
-            write("ocr", ocrMs: ms, chars: text.count, text: text, note: fullNote)
+
+        // 1) 상태바·키보드 줄 빼기
+        let sb = ScreenFilter.dropStatusBar(lines)
+        let kb = ScreenFilter.dropKeyboard(sb.kept)
+        removedStatusLines += sb.removed
+        removedKeyboardLines += kb.removed
+        let kept = kb.kept
+        let text = kept.map(\.text).joined(separator: "\n")
+        let cutNote = "\(fullNote) sb=\(sb.removed) kb=\(kb.removed)"
+
+        // 2) 이 앱·홈 화면은 기록 안 함
+        if let reason = ScreenFilter.skipReason(kept) {
+            skip(reason, ms: ms, text: text, note: cutNote)
+            return
         }
+        // 3) 글자가 거의 없거나, 최근 기록과 90% 이상 비슷하면 기록 안 함
+        let norm = ScreenFilter.normalize(text)
+        if norm.count < 10 {
+            skip("empty", ms: ms, text: text, note: cutNote)
+            return
+        }
+        let best = recentTexts.map { ScreenFilter.similarity(norm, $0) }.max() ?? 0
+        if best >= Self.dupThreshold {
+            skip("dup", ms: ms, text: text, note: cutNote + String(format: " sim=%.2f", best))
+            return
+        }
+        recentTexts.append(norm)
+        if recentTexts.count > 3 { recentTexts.removeFirst() }
+        write("ocr", ocrMs: ms, chars: text.count, text: text,
+              note: cutNote + String(format: " sim=%.2f", best))
+    }
+
+    /// 건너뛴 화면도 시험 중에는 글자를 남긴다. 잘못 걸러진 게 있는지 사람이 확인하기 위해서다.
+    /// (나중에 AI로 보낼 때는 kind == "ocr"만 보낸다.)
+    private func skip(_ reason: String, ms: Int, text: String, note: String) {
+        skipped[reason, default: 0] += 1
+        write("skip", ocrMs: ms, chars: text.count, text: text, note: "\(reason) \(note)")
+    }
+
+    private func statsNote() -> String {
+        let s = ["dup", "self", "home", "empty"].map { "\($0)=\(skipped[$0] ?? 0)" }.joined(separator: " ")
+        return "skip[\(s)] removedLines[sb=\(removedStatusLines) kb=\(removedKeyboardLines)]"
     }
 
     // MARK: - 기록

@@ -77,7 +77,7 @@ struct OCRSettings {
 /// 로그 한 줄 (JSON Lines).
 struct LogEntry: Codable {
     var t: Date
-    var kind: String          // start, ocr, same, beat, pressure, error, stop
+    var kind: String          // start, ocr, skip(note 첫 단어=이유), same(구버전), beat, pressure, error, stop
     var memMB: Double?        // 현재 phys_footprint
     var peakMB: Double?       // 최고 phys_footprint
     var availMB: Double?      // 한도까지 남은 메모리 (os_proc_available_memory)

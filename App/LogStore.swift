@@ -11,6 +11,9 @@ struct SessionSummary {
     var end: Date?
     var ocrRuns = 0
     var changed = 0
+    /// 건너뛴 이유별 개수 (dup, self, home, empty)
+    var skipped: [String: Int] = [:]
+    var skippedTotal: Int { skipped.values.reduce(0, +) }
     var errors = 0
     var pressure = 0
     var avgOcrMs = 0
@@ -82,9 +85,13 @@ final class LogStore: ObservableObject {
             }
             s.maxThermal = max(s.maxThermal, e.thermal ?? 0)
             switch e.kind {
-            case "ocr", "same":
+            case "ocr", "same", "skip":
                 s.ocrRuns += 1
                 if e.kind == "ocr" { s.changed += 1 }
+                if e.kind == "skip" {
+                    let reason = e.note?.split(separator: " ").first.map(String.init) ?? "?"
+                    s.skipped[reason, default: 0] += 1
+                }
                 if let ms = e.ocrMs { totalMs += ms; s.maxOcrMs = max(s.maxOcrMs, ms) }
             case "error": s.errors += 1
             case "pressure": s.pressure += 1
