@@ -2,18 +2,21 @@ name: Build IPA
 
 # 버전 규칙
 # - 버전 번호는 project.yml의 MARKETING_VERSION과 CHANGELOG.md에 적는다.
-# - v로 시작하는 태그(v0.2.2 등)를 올리면 그 버전으로 빌드하고 GitHub Release에 IPA를 영구 보관한다.
-#   (일반 빌드 결과물(Artifacts)은 30일 뒤 지워진다.)
-# - 예전 버전을 다시 받고 싶으면 Actions → Build IPA → Run workflow 에서 ref에 태그(v0.1.0 등)를 넣는다.
+# - 빌드가 성공했는데 그 번호의 Release(v0.2.2 등)가 아직 없으면 태그와 Release를 만들고 IPA를 영구 보관한다.
+#   이미 있으면 덮어쓰지 않는다. (일반 빌드 결과물(Artifacts)은 30일 뒤 지워진다.)
+# - 예전 커밋을 특정 번호로 다시 빌드·보관하려면 Run workflow 에서 ref(커밋)와 version(번호)을 넣는다.
 
 on:
   push:
     branches: [main, "claude/**"]
-    tags: ["v*"]
   workflow_dispatch:
     inputs:
       ref:
-        description: "빌드할 태그나 커밋 (비우면 이 브랜치). v로 시작하는 태그면 Release도 만든다."
+        description: "빌드할 커밋이나 태그 (비우면 이 브랜치)"
+        required: false
+        default: ""
+      version:
+        description: "버전 번호 (예: 0.1.0). 비우면 project.yml 값"
         required: false
         default: ""
 
@@ -39,16 +42,10 @@ jobs:
       - name: Decide version
         id: ver
         env:
-          INPUT_REF: ${{ inputs.ref }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          # 태그 빌드면 태그에서, 아니면 project.yml에서 버전을 읽는다.
-          REF="${INPUT_REF:-$GITHUB_REF_NAME}"
-          if [[ "$REF" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
-            VERSION="${BASH_REMATCH[1]}"; TAG="$REF"
-          else
-            VERSION=$(grep -E '^\s*MARKETING_VERSION:' project.yml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
-            TAG=""
-          fi
+          VERSION="${INPUT_VERSION:-$(grep -E '^\s*MARKETING_VERSION:' project.yml | head -1 | sed -E 's/.*"([^"]+)".*/\1/')}"
+          TAG="v$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "build=${{ github.run_number }}" >> "$GITHUB_OUTPUT"
@@ -96,8 +93,7 @@ jobs:
           path: out/*.ipa
           retention-days: 30
 
-      - name: Publish release (tags only)
-        if: steps.ver.outputs.tag != ''
+      - name: Publish release (once per version)
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.ver.outputs.tag }}
@@ -110,7 +106,8 @@ jobs:
             [ -n "$SECTION" ] && NOTES="$SECTION"
           fi
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            gh release upload "$TAG" out/*.ipa --clobber -R "$GITHUB_REPOSITORY"
+            echo "$TAG Release가 이미 있어 그대로 둔다. 새로 보관하려면 project.yml 버전을 올릴 것."
           else
-            gh release create "$TAG" out/*.ipa -R "$GITHUB_REPOSITORY" --title "$TAG" --notes "$NOTES"
+            gh release create "$TAG" out/*.ipa -R "$GITHUB_REPOSITORY" \
+              --target "$(git rev-parse HEAD)" --title "$TAG" --notes "$NOTES"
           fi
