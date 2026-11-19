@@ -23,6 +23,14 @@ enum Shared {
 
     static var isGroupAvailable: Bool { groupContainer != nil }
 
+    /// 앱 버전 (예: "0.2.2 (5)"). 숫자는 CHANGELOG.md와 GitHub 태그·Release 이름과 같다.
+    /// 괄호 안은 클라우드 빌드 번호.
+    static var appVersion: String {
+        let v = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "?"
+        let b = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "?"
+        return "\(v) (\(b))"
+    }
+
     /// 로그 파일 위치. App Group이 안 되면 자기 Documents 폴더(공유 안 됨).
     static var logURL: URL {
         let base = groupContainer

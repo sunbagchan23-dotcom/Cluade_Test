@@ -38,7 +38,7 @@ final class SampleHandler: RPBroadcastSampleHandler {
     override func broadcastStarted(withSetupInfo setupInfo: [String: NSObject]?) {
         settings = OCRSettings.load()
         UIDevice.current.isBatteryMonitoringEnabled = true
-        let note = "interval=\(settings.interval)s scale=\(settings.scale) lc=\(settings.languageCorrection) " +
+        let note = "v=\(Shared.appVersion) interval=\(settings.interval)s scale=\(settings.scale) lc=\(settings.languageCorrection) " +
             "group=\(Shared.appGroupID) shared=\(Shared.isGroupAvailable) provisioned=\(Shared.provisionedGroups)"
         write("start", note: note)
 

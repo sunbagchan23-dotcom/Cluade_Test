@@ -43,7 +43,7 @@ struct ContentView: View {
 
                 Section { diagnostics } header: { Text("진단") }
             }
-            .navigationTitle("OCR 시험")
+            .navigationTitle("OCR 시험 v\(Shared.appVersion.split(separator: " ").first.map(String.init) ?? "")")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     ShareLink(item: store.fileURL) { Image(systemName: "square.and.arrow.up") }
@@ -84,6 +84,7 @@ struct ContentView: View {
     }
 
     @ViewBuilder private var diagnostics: some View {
+        LabeledContent("버전", value: Shared.appVersion)
         LabeledContent("App Group", value: Shared.appGroupID)
         LabeledContent("공유 폴더 접근", value: Shared.isGroupAvailable ? "성공" : "실패")
         LabeledContent("서명된 그룹", value: Shared.provisionedGroups.isEmpty ? "(없음)" : Shared.provisionedGroups.joined(separator: ", "))
